@@ -385,12 +385,12 @@ The app reads the Event Hubs connection string from environment variables. You s
 
 Azure App Service needs to know how to start the Flask app using Gunicorn (the production web server).
 
-1. In your App Service, click **Configuration** → **General settings** tab.
-2. In the **Startup Command** field, enter:
+1. In your App Service, click **Configuration** → **Stack settings** tab.
+2. In the **Startup command** field, enter:
    ```
    gunicorn --bind 0.0.0.0:8000 app:app
    ```
-3. Click **Save** → **Continue**.
+3. Click **Apply**.
 
 ### Step 7 – Verify the deployment
 
