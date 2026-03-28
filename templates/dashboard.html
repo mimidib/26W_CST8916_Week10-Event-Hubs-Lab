@@ -271,13 +271,23 @@
       const ts   = e.timestamp ? e.timestamp.slice(11, 19) : "–";
       const type = e.event_type || "unknown";
       const cls  = TYPE_CLASS[type] || "t-unknown";
+
+      // Building device info string (New addition for assignment 2)
+      const deviceInfo = [
+        e.device_type || "?",
+        e.browser || "?",
+        e.os || "?"
+      ].join(" | ");
       const row  = document.createElement("div");
       row.className = "feed-row";
+      // Here we add our new enriched User-Agent device data to the feed (we also added CSS for .feed-device and adjust the grid layout to accommodate)
+
       row.innerHTML = `
         <span class="feed-ts">${ts}</span>
         <span class="feed-type ${cls}">${type}</span>
         <span class="feed-page">${e.page || "–"}</span>
         <span class="feed-user">${(e.user_id || "–").slice(0, 8)}</span>
+        <span class="feed-device" title="${deviceInfo}">${deviceInfo}</span>
       `;
       feed.appendChild(row);
     });

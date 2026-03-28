@@ -10,13 +10,10 @@
 #   GET  /dashboard     → serves the live analytics dashboard (dashboard.html)
 #   GET  /api/events    → returns recent events as JSON (polled by the dashboard)
 
-import os
 import json
+import os
 import threading
 from datetime import datetime, timezone
-
-from flask import Flask, jsonify, request, send_from_directory, abort
-from flask_cors import CORS
 
 # ---------------------------------------------------------------------------
 # Azure Event Hubs SDK
@@ -24,7 +21,10 @@ from flask_cors import CORS
 # EventHubConsumerClient  – reads events from Event Hubs
 # EventData               – wraps a single event payload
 # ---------------------------------------------------------------------------
-from azure.eventhub import EventHubProducerClient, EventHubConsumerClient, EventData
+from azure.eventhub import EventData, EventHubConsumerClient, EventHubProducerClient
+from flask import Flask, abort, g, jsonify, request, send_from_directory
+from flask_cors import CORS
+from user_agents import parse
 
 app = Flask(__name__, static_folder="static", template_folder="templates")
 CORS(app)
@@ -49,13 +49,47 @@ MAX_BUFFER = 50
 
 
 # ---------------------------------------------------------------------------
+# Enrichment – use user-agents library to parse the User-Agent header and extract our device info.
+#
+#   This runs before every request so the enriched data is available in the /track route when
+#   we publish to Event Hubs, and also in the /api/events route when we serve the dashboard
+#   (since we buffer events locally as well).
+# ---------------------------------------------------------------------------
+@app.before_request
+def enrich_event_context():
+    """Parse the User-Agent header and store device info in Flask's g object for this request.
+    g is a special Flask object that lets us store data for the duration of a request.
+    before_request runs before every request, so this enrichment happens for both
+    /track and /api/events routes."""
+    ua_string = request.headers.get("User_Agent")
+    if ua_string:
+        user_agent = parse(ua_string)
+        g.device_type = (
+            "mobile"
+            if user_agent.is_mobile
+            else "tablet"
+            if user_agent.is_tablet
+            else "pc"
+        )
+        g.browser = user_agent.browser.family
+        g.os = user_agent.os.family
+    else:
+        # fallback for requests without UA (e.g., some API clients)
+        g.device_type = "unknown"
+        g.browser = "unknown"
+        g.os = "unknown"
+
+
+# ---------------------------------------------------------------------------
 # Helper – send a single event dict to Azure Event Hubs
 # ---------------------------------------------------------------------------
 def send_to_event_hubs(event_dict: dict):
     """Serialize event_dict to JSON and publish it to Event Hubs."""
     if not CONNECTION_STR:
         # Gracefully skip if the connection string is not configured yet
-        app.logger.warning("EVENT_HUB_CONNECTION_STR is not set – skipping Event Hubs publish")
+        app.logger.warning(
+            "EVENT_HUB_CONNECTION_STR is not set – skipping Event Hubs publish"
+        )
         return
 
     # EventHubProducerClient is created fresh per request here for simplicity.
@@ -100,7 +134,9 @@ def start_consumer():
     and make the web server unable to handle any HTTP requests.
     """
     if not CONNECTION_STR:
-        app.logger.warning("EVENT_HUB_CONNECTION_STR is not set – consumer thread not started")
+        app.logger.warning(
+            "EVENT_HUB_CONNECTION_STR is not set – consumer thread not started"
+        )
         return
 
     # $Default is the built-in consumer group every Event Hub has.
@@ -133,6 +169,7 @@ def start_consumer():
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
+
 
 @app.route("/")
 def index():
@@ -171,10 +208,14 @@ def track():
     # Enrich the event with a server-side timestamp
     event = {
         "event_type": request.json.get("event_type", "unknown"),
-        "page":       request.json.get("page", "/"),
+        "page": request.json.get("page", "/"),
         "product_id": request.json.get("product_id"),
-        "user_id":    request.json.get("user_id", "anonymous"),
-        "timestamp":  datetime.now(timezone.utc).isoformat(),
+        "user_id": request.json.get("user_id", "anonymous"),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        # Our new user-agent context
+        "device_type": g.get("device_type", "unknown"),
+        "browser": g.get("browser", "unknown"),
+        "os": g.get("os", "unknown"),
     }
 
     send_to_event_hubs(event)
