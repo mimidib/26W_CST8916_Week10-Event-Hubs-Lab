@@ -4,6 +4,8 @@
 - 040829779
 - March 28th, 2026
 
+---
+
 ## Gap 1. Where To Add Enrichment? To Answer, Find Where We Currently Enrich In The Flow
 To find out my Gap 1., enriching the data, I had to search in our repository for where we currently gather for data to send to the dashboard.
 - Client.html to capture from the user browser then sends to app.py payload to send to eventhub!  
@@ -234,3 +236,172 @@ We need to modify the dashboard to render the new fields.
 As long as our user-agent data is stored in `_event_buffer`- which it is, our API `/api/events` returns them, but right now our dashboard is ignoring these fields. 
 
 To change this, the JS function `renderFeed(events)` currently builds a row using only `ts`, `type`, `page` and `user_id` so we will modify it to refer to our new fields `device_type`, `browser`, and `os`.
+
+Shop after gap 1. solution implemented:  
+["Gap 1 Implementation: Shop "](gap1-shop.png)
+
+Dashboard after gap 1. solution implemented:  
+["Gap 1 Implementation: Dashboard "](gap1-dashboard.png)
+
+## Gap 1 Progress: Implementation Architecture Diagram
+Current Project State as of this point: 
+
+```mermaid
+flowchart LR
+    subgraph AAS["☁️ Azure App Service"]
+        direction TB
+        Store["🛍️ client.html<br/>Demo Store<br/>(Event Producer)"]
+        Dashboard["📊 dashboard.html<br/>Live Dashboard<br/>(Event Consumer View)"]
+
+        subgraph Flask["⚙️ app.py — Flask Application"]
+            direction TB
+            Enrich["📝 Enrichment<br/>@app.before_request<br/>Parses User-Agent →<br/>device_type, browser, os"]
+            Track["/track<br/>send_to_event_hubs()<br/>Adds enriched fields to event"]
+            API["/api/events<br/>_event_buffer<br/>(now contains enriched fields)"]
+            Consumer["Background Consumer Thread<br/>EventHubConsumerClient"]
+        end
+
+        Store -->|"POST /track"| Track
+        API -->|"JSON response<br/>(events now include device info)"| Dashboard
+        Dashboard -->|"polls every 2 s<br/>GET /api/events"| API
+    end
+
+    subgraph EH["☁️ Azure Event Hubs"]
+        direction TB
+        NS["Namespace: shopstream-mimi"]
+        Hub["Event Hub: clickstream"]
+        P0["Partition 0"]
+        P1["Partition 1"]
+        NS --> Hub
+        Hub --> P0
+        Hub --> P1
+    end
+
+    Enrich -->|"g.device_type, g.browser, g.os"| Track
+    Track -->|"azure-eventhub SDK<br/>publish enriched event"| EH
+    EH -->|"read events<br/>continuously"| Consumer
+    Consumer -->|"append to buffer"| API
+
+    %% ── Dark fills + light text ──────────────────────────────────────
+    %% Frontend (dark amber)
+    style Store     fill:#2c1a0a,stroke:#e67e22,stroke-width:2px,color:#ffffff
+    style Dashboard fill:#2c1a0a,stroke:#e67e22,stroke-width:2px,color:#ffffff
+
+    %% Flask container (dark blue)
+    style Flask     fill:#0a1f3a,stroke:#3b82f6,stroke-width:2px,color:#ffffff
+
+    %% Flask internals (varying dark blues)
+    style Enrich    fill:#1e3a5f,stroke:#4b9eff,stroke-width:1.5px,color:#ffffff
+    style Track     fill:#1a2e4a,stroke:#4b9eff,stroke-width:1.5px,color:#ffffff
+    style API       fill:#1a2e4a,stroke:#4b9eff,stroke-width:1.5px,color:#ffffff
+    style Consumer  fill:#1a2e4a,stroke:#4b9eff,stroke-width:1.5px,color:#ffffff
+
+    %% App Service container (dark grey)
+    style AAS       fill:#1e1e1e,stroke:#8e8e8e,stroke-width:2px,color:#ffffff
+
+    %% Event Hubs (dark purple)
+    style EH        fill:#2d1a3a,stroke:#b77bff,stroke-width:2px,color:#ffffff
+    style NS        fill:#38204a,stroke:#b77bff,stroke-width:1.5px,color:#ffffff
+    style Hub       fill:#3f2457,stroke:#b77bff,stroke-width:1.5px,color:#ffffff
+    style P0        fill:#442a60,stroke:#b77bff,stroke-width:1.5px,color:#ffffff
+    style P1        fill:#442a60,stroke:#b77bff,stroke-width:1.5px,color:#ffffff
+```
+---
+## Gap 2. Stream Analytics Query + Dashboard Integration
+
+**My Tasks:**
+
+1. Create an **Azure Stream Analytics job** that reads from your Event Hubs instance.
+
+2. **Write the SAQL queries** that answer both business questions. Choose the windowing strategy, aggregation logic, and output columns. All queries must use `TIMESTAMP BY`.
+   - **Q1:** *"Which device types are most active?"* — Continuous breakdown of traffic by device type to prioritise mobile vs. desktop campaigns.
+   - **Q2:** *"Are there traffic spikes?"* — Detect bursts of activity in the event stream to correlate with promotions or incidents.
+
+3. **Display the results on your dashboard.** Update `dashboard.html` to show both insights — device type breakdown and spike detection — updated as new windows complete.
+
+### 1. Create Azure Stream Analytics Job
+
+- In the Azure portal, went to Event Hubs → `shopstream-mimi` Namespace → Event Hubs: `clickstream` → Process Data → *Enable real time insights from events* → `Start`.
+- Created a storage account `cst8916week10storageacc` with the most basic configuration (LRS).
+- Created a blob container `cst8916week10cont`.
+- Created Stream Analytics job `cst8916week10saj1`.
+  - Set input: Event Hub `clickstream` with default auto‑fill configurations.
+  - Set output: `cst8916week10cont` with default auto‑fill configurations.
+
+### 2. Write SAQL Queries
+
+**Q1:** *"Which device types are most active?"* — They want a continuous breakdown of traffic by device type so they can prioritise mobile vs. desktop campaigns.
+
+**Q2:** *"Are there traffic spikes?"* — They want to detect bursts of activity in the event stream so they can correlate them with promotions or incidents.
+
+To accomplish these, I did some research on the following:
+
+- [Analytic functions – Azure Stream Analytics](https://learn.microsoft.com/en-us/stream-analytics-query/analytic-functions-azure-stream-analytics)
+- To learn SAQL, I reviewed the rules and documentation for [aggregation functions](https://learn.microsoft.com/en-us/stream-analytics-query/aggregate-functions-azure-stream-analytics) and [query language elements](https://learn.microsoft.com/en-us/stream-analytics-query/query-language-elements-azure-stream-analytics). I already have some knowledge of SQL, so it was mostly a matter of remembering aggregations, learning the rules for SAQL aggregation functions, and understanding how to use windows.
+
+`TIMESTAMP BY` is used to choose the specific data field for event time windowing, especially in situations like ours where we have multiple time fields. I used `TIMESTAMP BY timestamp` to use the `timestamp` field as it is in UTC. I also discovered that the `timestamp` field is a string (JSON property), and Azure Stream Analytics (ASA) automatically parses strings like this into a `datetime` type, which is really helpful.
+
+**Decisions I made for Q1 – "Which device types are most active?"**
+
+- **Windows**
+  - `TumblingWindow` allows me to have a simple count of events by device_type over a fixed interval. I chose a 10‑second window for this assignment because the dashboard polls every 2 seconds, so 10 seconds gives a clean snapshot without overwhelming the UI. In a real deployment, I might use a longer window (e.g., 1 minute or 1 hour) depending on how often the report is consumed.
+  - `HoppingWindow` would be good for seeing a moving average / trend over overlapping periods (e.g., average page views over the last minute, updated every 10 seconds).
+  - `SlidingWindow` is an event‑driven overlapping window: each new event includes all events that happened within the previous specified interval (e.g., total clicks in the last 10 seconds, refreshing with each new click). This is what I used for API throughput metrics at my last job. For seeing trends, it wouldn’t be as helpful because it would be too volatile.
+
+**Decisions I made for Q2 – "Are there traffic spikes?"**
+
+- **Window choice – TumblingWindow(second, 10)**  
+  I kept the same tumbling window size (10 seconds) as in Q1 so that both outputs are aligned on the same time boundaries. This makes it easy to correlate a spike with the device breakdown that happened in the same window.
+
+- **Spike detection method – fixed threshold with HAVING**  
+  Instead of using complex rolling averages, I used a simple **fixed threshold** with the `HAVING` clause. I set the threshold to `2` for this assignment to demonstrate spikes clearly (any 10‑second window with more than 2 events triggers an alert). In a production scenario, the threshold would be determined by historical traffic patterns (e.g., 3× the average).  
+  - The `HAVING` clause filters the output to include only those windows where the condition is met. This means the output blob will only contain rows for spike windows, making it easy to detect bursts.
+
+- **Why not a rolling average?**  
+  A rolling average would adapt to changing traffic, but it requires more complex query logic (e.g., `LAG` or user‑defined functions). For this assignment, a fixed threshold is simpler to implement and still clearly shows the concept of spike detection.
+
+**Overall job architecture – one ASA job with two outputs**  
+I decided to use a **single ASA job** containing both queries, each writing to its own blob output (`bloboutputq1` for device breakdown, `bloboutputq2` for spike alerts). This approach is simpler than running two separate jobs because:  
+- It reduces resource usage (only one job to start/stop and monitor).  
+- Both queries share the same input configuration, which avoids duplication.  
+- The outputs are automatically separated into different blobs (`bloboutputq1`, `bloboutputq2`), which makes it easier for the Flask dashboard to fetch each data set independently without having to filter mixed records.
+
+The queries themselves are shown below:
+
+```SQL
+-- ------------------------------------------------------------
+-- Q1: Device breakdown – count events per device type every 10 seconds
+-- ------------------------------------------------------------
+SELECT
+    device_type,
+    COUNT(*) AS event_count,
+    System.Timestamp AS window_end
+INTO
+    [bloboutputq1]
+FROM
+    [clickstream]
+TIMESTAMP BY timestamp
+GROUP BY
+    device_type,
+    TumblingWindow(second, 10)
+
+-- ------------------------------------------------------------
+-- Q2: Spike detection – count total events per 10‑second window and alert if above threshold
+-- ------------------------------------------------------------
+SELECT
+    System.Timestamp AS window_end,
+    COUNT(*) AS event_count
+INTO
+    [bloboutputq2]
+FROM
+    [clickstream]
+TIMESTAMP BY timestamp
+GROUP BY
+    TumblingWindow(second, 10)
+HAVING COUNT(*) > 2          -- set spike alert to 2 for demonstrating spikes for assignment
+```
+This structure answers both business questions efficiently and provides clean, separated outputs for the dashboard.
+
+### 3. Display on Dashboard
+
+## Architecture Diagram - Gap 1. and Gap2. Completed
