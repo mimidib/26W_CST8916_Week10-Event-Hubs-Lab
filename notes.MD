@@ -354,7 +354,7 @@ To accomplish these, I did some research on the following:
   I kept the same tumbling window size (10 seconds) as in Q1 so that both outputs are aligned on the same time boundaries. This makes it easy to correlate a spike with the device breakdown that happened in the same window.
 
 - **Spike detection method – fixed threshold with HAVING**  
-  Instead of using complex rolling averages, I used a simple **fixed threshold** with the `HAVING` clause. I set the threshold to `2` for this assignment to demonstrate spikes clearly (any 10‑second window with more than 2 events triggers an alert). In a production scenario, the threshold would be determined by historical traffic patterns (e.g., 3× the average).  
+  Instead of using complex rolling averages, I used a simple **fixed threshold** with the `HAVING` clause. I set the threshold to `10` for this assignment to demonstrate spikes clearly (any 10‑second window with more than 10 events triggers an alert). In a production scenario, the threshold would be determined by historical traffic patterns (e.g., 3× the average).  
   - The `HAVING` clause filters the output to include only those windows where the condition is met. This means the output blob will only contain rows for spike windows, making it easy to detect bursts.
 
 - **Why not a rolling average?**  
@@ -398,10 +398,140 @@ FROM
 TIMESTAMP BY timestamp
 GROUP BY
     TumblingWindow(second, 10)
-HAVING COUNT(*) > 2          -- set spike alert to 2 for demonstrating spikes for assignment
+HAVING COUNT(*) > 10          -- set spike alert to 10 for demonstrating spikes for assignment
 ```
 This structure answers both business questions efficiently and provides clean, separated outputs for the dashboard.
 
 ### 3. Display on Dashboard
+
+With the ASA job running producing JSON data in the 2 blobs, now let's adjust our Flask App to retrieve this information from our blobs, and then adjust our dashboard to display this new analysed data.
+
+**1. Install Azure SDK for blob access & add to requirements.txt**
+
+```bash
+pip install azure-storage-blob
+```
+
+**2. Add Storage Connection String as Env Var**
+
+In local environment & Azure App Service Settings we need to set: 
+```bash
+AZURE_STORAGE_CONNECTION_STRING = "DefaultEndpointsProtocol=https;AccountName=...;AccountKey=...;EndpointSuffix=core.windows.net"
+```
+This is the connection nstring for the sotrage account `cst8916week10storageacc` that hosts our blob containers `bloboutputq1` and `bloboutputq2`.
+Get this from going to the Storage Account -> Security + Networking -> Access Keys under Connection String.
+
+**3. Add Help Function and Endpoints in `app.py`**
+
+```python
+# ---------------------------------------------------------------------------
+# Azure Blob Storage – read latest ASA output from separate containers
+# ---------------------------------------------------------------------------
+from azure.storage.blob import ContainerClient, BlobServiceClient
+import json
+
+STORAGE_CONN_STR   = os.environ.get("AZURE_STORAGE_CONNECTION_STRING", "")
+STORAGE_ACCOUNT    = "cst8916week10storageacc"
+
+# Container names match the ASA output aliases exactly
+CONTAINER_Q1 = "bloboutputq1"   # device breakdown output
+CONTAINER_Q2 = "bloboutputq2"   # spike alerts output
+
+
+def get_latest_blob_from_container(container_name: str) -> list:
+    """
+    Return the parsed JSON records from the most recently modified blob
+    inside the given container.
+
+    Works with both:
+      - connection string auth  (AZURE_STORAGE_CONNECTION_STRING is set)
+      - anonymous / public access (connection string is empty)
+
+    ASA writes one JSON record per line (JSONL format), so we split on
+    newlines and parse each line individually.
+    """
+    try:
+        if STORAGE_CONN_STR:
+            # Authenticated access via connection string
+            container_client = ContainerClient.from_connection_string(
+                conn_str=STORAGE_CONN_STR,
+                container_name=container_name,
+            )
+        else:
+            # Anonymous / public access – build the URL from the account name
+            account_url = f"https://{STORAGE_ACCOUNT}.blob.core.windows.net"
+            container_client = ContainerClient(
+                account_url=account_url,
+                container_name=container_name,
+                credential=None,          # no credentials = anonymous
+            )
+
+        blobs = list(container_client.list_blobs())
+        if not blobs:
+            return []
+
+        # Pick the most recently modified blob (latest ASA window output)
+        blobs.sort(key=lambda b: b.last_modified, reverse=True) # order from most recent changed to oldest - b (a blob in the list)
+            # last_modified is a timestamp that tracks when a blob was last changed 
+        latest_blob = blobs[0]
+
+        blob_client = container_client.get_blob_client(latest_blob.name)
+        raw = blob_client.download_blob().readall().decode("utf-8").strip()
+
+        if not raw:
+            return []
+
+        # ASA writes JSONL – one JSON object per line
+        records = []
+        for line in raw.split("\n"):
+            line = line.strip()
+            if line:
+                try:
+                    records.append(json.loads(line))
+                except json.JSONDecodeError:
+                    pass   # skip malformed lines
+
+        return records
+
+    except Exception as exc:
+        app.logger.error(f"Blob read error ({container_name}): {exc}")
+        return []
+
+
+@app.route("/api/device-breakdown", methods=["GET"])
+def device_breakdown():
+    """
+    Return the latest device-breakdown records from bloboutputq1.
+
+    Each record has the shape:
+        { "device_type": "pc", "event_count": 5, "window_end": "2026-03-29T..." }
+    """
+    data = get_latest_blob_from_container(CONTAINER_Q1)
+    return jsonify(data), 200
+
+
+@app.route("/api/spike-alerts", methods=["GET"])
+def spike_alerts():
+    """
+    Return the latest spike-alert records from bloboutputq2.
+
+    Each record has the shape:
+        { "window_end": "2026-03-29T...", "event_count": 7 }
+
+    Only windows where event_count > 10 are written here (enforced by HAVING element in ASA query).
+    """
+    data = get_latest_blob_from_container(CONTAINER_Q2)
+    return jsonify(data), 200
+
+```
+Once added, I ran locally and logged the events to test this section worked before moving on to the next step.
+
+**4. Update `dashboard.html`**
+
+Some changes we did:
+- Adding two new panels inside `.panels`
+- Added `fetchDeviceBreakdown()` to read from `/api/device-breakdown` endpoint and render a bar chart. We set teh bar width scale relate to the actual max of the data rather than hardcoding to 100 so small counts still look meaningful. 
+- Added `fetchSpikealerts()` to read from `/api/spike-alerts` endpoint 
+- Added `fetchAndRender()` to call both new functions on every 2-second poll for fast updates.
 
 ## Architecture Diagram - Gap 1. and Gap2. Completed

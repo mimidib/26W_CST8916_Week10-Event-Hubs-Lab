@@ -96,7 +96,7 @@
       margin-bottom: 16px;
     }
 
-    /* ── Bar chart ──────────────────────────────────────────── */
+    /* ── Bar chart (shared by Events by Type + Device Breakdown) */
     .bar-row {
       display: flex;
       align-items: center;
@@ -106,7 +106,8 @@
     .bar-label { width: 120px; font-size: 0.85rem; color: #c9d1d9; flex-shrink: 0; }
     .bar-track { flex: 1; background: #21262d; border-radius: 4px; height: 18px; overflow: hidden; }
     .bar-fill  { height: 100%; background: #1f6feb; border-radius: 4px; transition: width 0.4s ease; }
-    .bar-count { width: 30px; text-align: right; font-size: 0.85rem; color: #8b949e; }
+    .bar-fill.device { background: #bc8cff; }   /* purple for device bars */
+    .bar-count { width: 36px; text-align: right; font-size: 0.85rem; color: #8b949e; }
 
     /* ── Event feed ─────────────────────────────────────────── */
     #feed {
@@ -122,10 +123,11 @@
       border-bottom: 1px solid #21262d;
     }
     .feed-row:last-child { border-bottom: none; }
-    .feed-ts    { color: #484f58; flex-shrink: 0; width: 90px; }
-    .feed-type  { flex-shrink: 0; width: 110px; }
-    .feed-page  { color: #8b949e; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .feed-user  { color: #484f58; flex-shrink: 0; width: 60px; }
+    .feed-ts     { color: #484f58; flex-shrink: 0; width: 90px; }
+    .feed-type   { flex-shrink: 0; width: 110px; }
+    .feed-page   { color: #8b949e; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .feed-user   { color: #484f58; flex-shrink: 0; width: 60px; }
+    .feed-device { color: #8b949e; flex-shrink: 0; font-size: 0.72rem; }
 
     /* event type colours */
     .t-page_view    { color: #58a6ff; }
@@ -134,6 +136,25 @@
     .t-purchase     { color: #f85149; }
     .t-banner_click { color: #bc8cff; }
     .t-unknown      { color: #8b949e; }
+
+    /* ── Spike alert rows ───────────────────────────────────── */
+    .spike-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 10px;
+      margin-bottom: 8px;
+      background: rgba(248, 81, 73, 0.08);
+      border: 1px solid rgba(248, 81, 73, 0.25);
+      border-radius: 6px;
+      font-size: 0.83rem;
+    }
+    .spike-icon  { font-size: 1rem; flex-shrink: 0; }
+    .spike-time  { color: #f85149; font-weight: 600; flex-shrink: 0; }
+    .spike-count { color: #e3b341; margin-left: auto; font-family: "Courier New", monospace; }
+
+    /* ── Placeholder text ───────────────────────────────────── */
+    .placeholder { color: #484f58; font-size: 0.85rem; }
 
     /* ── Footer ─────────────────────────────────────────────── */
     footer {
@@ -181,35 +202,63 @@
 <!-- ── Panels ─────────────────────────────────────────────────── -->
 <div class="panels">
 
-  <!-- Event type breakdown -->
+  <!-- ── Panel 1: Events by Type ──────────────────── -->
   <div class="panel" style="max-width:400px;">
     <h3>Events by Type</h3>
     <div id="bar-chart">
-      <p style="color:#484f58; font-size:0.85rem;">Waiting for events...</p>
+      <p class="placeholder">Waiting for events...</p>
     </div>
   </div>
 
-  <!-- Live event feed -->
+  <!-- ── Panel 2: Live event feed ─────────────────── -->
   <div class="panel">
     <h3>Live Event Feed (from Azure Event Hubs)</h3>
     <div id="feed">
-      <p style="color:#484f58; font-size:0.85rem;">Waiting for events...</p>
+      <p class="placeholder">Waiting for events...</p>
     </div>
   </div>
 
-</div>
+  <!-- ── Panel 3: Device Breakdown – Added for Assignment - NEW (from bloboutputq1) ─── -->
+  <div class="panel" style="max-width:420px;">
+    <h3>Device Activity · ASA Q1 (bloboutputq1)</h3>
+    <!--
+      Data source: Azure Stream Analytics -> bloboutputq1 container
+      Schema per row: { device_type, event_count, window_end }
+      Populated by: fetchDeviceBreakdown() polling /api/device-breakdown every 2 s
+    -->
+    <div id="device-breakdown">
+      <p class="placeholder">Waiting for ASA window data...</p>
+    </div>
+    <div id="device-window-time" style="margin-top:12px; font-size:0.72rem; color:#484f58;"></div>
+  </div>
+
+  <!-- ── Panel 4: Spike Alerts – NEW (from bloboutputq2) ─────── -->
+  <div class="panel" style="max-width:420px;">
+    <h3>Traffic Spike Alerts · ASA Q2 (bloboutputq2)</h3>
+    <!--
+      Data source: Azure Stream Analytics -> bloboutputq2 container
+      Schema per row: { window_end, event_count }
+      Only written when event_count > 2 (accomplishehd using the HAVING clause in our ASA query)
+      Populated by: fetchSpikeAlerts() polling /api/spike-alerts every 2 s
+    -->
+    <div id="spike-alerts">
+      <p class="placeholder">No spikes detected yet...</p>
+    </div>
+  </div>
+
+</div><!-- /.panels -->
 
 <footer>
-  Polling <code>/api/events</code> every 2 seconds &nbsp;|&nbsp;
-  Events consumed from Azure Event Hubs &nbsp;|&nbsp;
+  Polling <code>/api/events</code>, <code>/api/device-breakdown</code> &amp; <code>/api/spike-alerts</code> every 2 s &nbsp;|&nbsp;
+  Stream Analytics job: <code>cst8916week10saj1</code> &nbsp;|&nbsp;
+  Storage: <code>cst8916week10storageacc</code> &nbsp;|&nbsp;
   CST8916 Week 10 Lab
 </footer>
 
 <script>
-  // Poll /api/events every 2 seconds and refresh the UI
   const POLL_INTERVAL_MS = 2000;
 
-  // Colour map for event types
+  // ── Colour map for event types ────────────────────────────────
   const TYPE_CLASS = {
     page_view:     "t-page_view",
     product_click: "t-product_click",
@@ -218,7 +267,14 @@
     banner_click:  "t-banner_click",
   };
 
+  // ── Device type display label ───────────────────────────────
+  const DEVICE_LABEL = { pc: "💻 PC", mobile: "📱 Mobile", tablet: "📟 Tablet", unknown: "❓ Unknown" };
+
+  // =================================================================
+  // Master poll – called every 2 seconds
+  // =================================================================
   function fetchAndRender() {
+    // 1. live event feed from Event Hubs buffer
     fetch("/api/events?limit=50")
       .then(res => res.json())
       .then(data => {
@@ -226,10 +282,19 @@
         renderBarChart(data.summary);
         renderFeed(data.events);
       })
-      .catch(err => console.error("Poll error:", err));
+      .catch(err => console.error("Poll /api/events error:", err));
+
+    // 2. Added for Assignment - NEW: device breakdown from bloboutputq1
+    fetchDeviceBreakdown();
+
+    // 3. Added for Assignment - NEW: spike alerts from bloboutputq2
+    fetchSpikeAlerts();
   }
 
-  // ── KPI cards ────────────────────────────────────────────────
+  // =================================================================
+  // Existing renderers (I didn't change this)
+  // =================================================================
+
   function renderKPIs(data) {
     document.getElementById("kpi-total").textContent    = data.total ?? 0;
     document.getElementById("kpi-views").textContent    = data.summary?.page_view    ?? 0;
@@ -237,63 +302,157 @@
     document.getElementById("kpi-purchase").textContent = data.summary?.purchase     ?? 0;
   }
 
-  // ── Bar chart ─────────────────────────────────────────────────
   function renderBarChart(summary) {
     const container = document.getElementById("bar-chart");
     if (!summary || Object.keys(summary).length === 0) return;
-
     const maxVal = Math.max(...Object.values(summary), 1);
     container.innerHTML = "";
-
-    // Sort by count descending
-    const sorted = Object.entries(summary).sort((a, b) => b[1] - a[1]);
-    sorted.forEach(([type, count]) => {
-      const pct = (count / maxVal * 100).toFixed(1);
-      const row = document.createElement("div");
-      row.className = "bar-row";
-      row.innerHTML = `
-        <div class="bar-label ${TYPE_CLASS[type] || "t-unknown"}">${type}</div>
-        <div class="bar-track"><div class="bar-fill" style="width:${pct}%"></div></div>
-        <div class="bar-count">${count}</div>
-      `;
-      container.appendChild(row);
-    });
+    Object.entries(summary)
+      .sort((a, b) => b[1] - a[1])
+      .forEach(([type, count]) => {
+        const pct = (count / maxVal * 100).toFixed(1);
+        const row = document.createElement("div");
+        row.className = "bar-row";
+        row.innerHTML = `
+          <div class="bar-label ${TYPE_CLASS[type] || "t-unknown"}">${type}</div>
+          <div class="bar-track"><div class="bar-fill" style="width:${pct}%"></div></div>
+          <div class="bar-count">${count}</div>`;
+        container.appendChild(row);
+      });
   }
 
-  // ── Live feed ─────────────────────────────────────────────────
   function renderFeed(events) {
     const feed = document.getElementById("feed");
     if (!events || events.length === 0) return;
-
     feed.innerHTML = "";
-    // Show newest first
     [...events].reverse().forEach(e => {
-      const ts   = e.timestamp ? e.timestamp.slice(11, 19) : "–";
+      const ts  = e.timestamp ? e.timestamp.slice(11, 19) : "–";
       const type = e.event_type || "unknown";
       const cls  = TYPE_CLASS[type] || "t-unknown";
-
-      // Building device info string (New addition for assignment 2)
-      const deviceInfo = [
-        e.device_type || "?",
-        e.browser || "?",
-        e.os || "?"
-      ].join(" | ");
-      const row  = document.createElement("div");
+      const deviceInfo = [e.device_type || "?", e.browser || "?", e.os || "?"].join(" | ");
+      const row = document.createElement("div");
       row.className = "feed-row";
-      // Here we add our new enriched User-Agent device data to the feed (we also added CSS for .feed-device and adjust the grid layout to accommodate)
-
       row.innerHTML = `
         <span class="feed-ts">${ts}</span>
         <span class="feed-type ${cls}">${type}</span>
         <span class="feed-page">${e.page || "–"}</span>
         <span class="feed-user">${(e.user_id || "–").slice(0, 8)}</span>
-        <span class="feed-device" title="${deviceInfo}">${deviceInfo}</span>
-      `;
+        <span class="feed-device" title="${deviceInfo}">${deviceInfo}</span>`;
       feed.appendChild(row);
     });
   }
 
-  // Kick off polling immediately, then repeat
+  // =================================================================
+  // Added for Assignment 
+  // NEW: Device breakdown – reads /api/device-breakdown
+  //      which serves the latest blob from container bloboutputq1
+  //
+  // ASA Q1 schema:  { device_type, event_count, window_end }
+  // One row per device_type per 10-second window.
+  // =================================================================
+  function fetchDeviceBreakdown() {
+    fetch("/api/device-breakdown")
+      .then(res => res.json())
+      .then(data => {
+        const container = document.getElementById("device-breakdown");
+        const timeEl    = document.getElementById("device-window-time");
+
+        if (!data || data.length === 0) {
+          container.innerHTML = '<p class="placeholder">No device data yet — ASA may still be starting up.</p>';
+          timeEl.textContent = "";
+          return;
+        }
+
+        // data is an array of rows from the latest blob file.
+        // Multiple rows can share the same window (one per device_type).
+        // We group by device_type and sum event_count in case there are
+        // multiple windows in the same blob file.
+        const totals = {};
+        let latestWindow = "";
+        data.forEach(row => {
+          const dt = row.device_type || "unknown";
+          totals[dt] = (totals[dt] || 0) + (row.event_count || 0);
+          // Track the latest window_end for the subtitle
+          if (!latestWindow || row.window_end > latestWindow) {
+            latestWindow = row.window_end;
+          }
+        });
+
+        const maxVal = Math.max(...Object.values(totals), 1);
+        container.innerHTML = "";
+
+        Object.entries(totals)
+          .sort((a, b) => b[1] - a[1])
+          .forEach(([dt, count]) => {
+            const pct   = (count / maxVal * 100).toFixed(1);
+            const label = DEVICE_LABEL[dt] || dt;
+            const row   = document.createElement("div");
+            row.className = "bar-row";
+            row.innerHTML = `
+              <div class="bar-label">${label}</div>
+              <div class="bar-track">
+                <div class="bar-fill device" style="width:${pct}%"></div>
+              </div>
+              <div class="bar-count">${count}</div>`;
+            container.appendChild(row);
+          });
+
+        // Show which window this data belongs to
+        if (latestWindow) {
+          const t = new Date(latestWindow).toLocaleTimeString();
+          timeEl.textContent = `Latest ASA window end: ${t} (UTC)`;
+        }
+      })
+      .catch(err => console.error("Device breakdown fetch error:", err));
+  }
+
+  // =================================================================
+  // Added for Assignment 
+  // NEW: Spike alerts – reads /api/spike-alerts
+  //      which serves the latest blob from container bloboutputq2
+  //
+  // ASA Q2 schema:  { window_end, event_count }
+  // A row only exists in bloboutputq2 when event_count > 2 ( accomplished using the HAVING clause in our ASA query).
+  // There is NO avg_5windows field – our query does not produce one.
+  // =================================================================
+  function fetchSpikeAlerts() {
+    fetch("/api/spike-alerts")
+      .then(res => res.json())
+      .then(data => {
+        const container = document.getElementById("spike-alerts");
+
+        if (!data || data.length === 0) {
+          container.innerHTML = '<p class="placeholder">No spikes detected — traffic is within normal range.</p>';
+          return;
+        }
+
+        container.innerHTML = "";
+
+        // Show newest spike first
+        [...data]
+          .sort((a, b) => (b.window_end || "").localeCompare(a.window_end || ""))
+          .forEach(alert => {
+            // window_end is the field name produced by our Q2 query
+            const time  = alert.window_end
+              ? new Date(alert.window_end).toLocaleTimeString()
+              : "–";
+            const count = alert.event_count ?? "–";
+
+            const row = document.createElement("div");
+            row.className = "spike-row";
+            row.innerHTML = `
+              <span class="spike-icon">⚠️</span>
+              <span class="spike-time">Spike at ${time}</span>
+              <span class="spike-count">${count} events in 10 s</span>`;
+            container.appendChild(row);
+          });
+      })
+      .catch(err => console.error("Spike alerts fetch error:", err));
+  }
+
+  // =================================================================
+  // Boot: poll immediately, then every 2 seconds
+  // =================================================================
   fetchAndRender();
   setInterval(fetchAndRender, POLL_INTERVAL_MS);
 </script>

@@ -3,3 +3,4 @@ flask-cors==4.0.1
 azure-eventhub==5.11.7
 gunicorn==22.0.0
 user-agents==2.2.0
+azure-storage-blob==12.14.1

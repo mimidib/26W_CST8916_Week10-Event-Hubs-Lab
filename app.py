@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 # EventData               – wraps a single event payload
 # ---------------------------------------------------------------------------
 from azure.eventhub import EventData, EventHubConsumerClient, EventHubProducerClient
+from azure.storage.blob import BlobServiceClient, ContainerClient
 from flask import Flask, abort, g, jsonify, request, send_from_directory
 from flask_cors import CORS
 from user_agents import parse
@@ -40,6 +41,12 @@ CORS(app)
 # ---------------------------------------------------------------------------
 CONNECTION_STR = os.environ.get("EVENT_HUB_CONNECTION_STR", "")
 EVENT_HUB_NAME = os.environ.get("EVENT_HUB_NAME", "clickstream")
+STORAGE_CONN_STR = os.environ.get("AZURE_STORAGE_CONNECTION_STRING", "")
+STORAGE_ACCOUNT = "cst8916week10storageacc"
+
+# Container names match the ASA output aliases exactly
+CONTAINER_Q1 = "bloboutputq1"  # device breakdown output
+CONTAINER_Q2 = "bloboutputq2"  # spike alerts output
 
 # In-memory buffer: stores the last 50 events received by the consumer thread.
 # In a production system you would query a database or Azure Stream Analytics output.
@@ -78,6 +85,99 @@ def enrich_event_context():
         g.device_type = "unknown"
         g.browser = "unknown"
         g.os = "unknown"
+
+
+# ---------------------------------------------------------------------------
+# Azure Blob Storage – read latest ASA output from separate containers
+# ---------------------------------------------------------------------------
+
+
+def get_latest_blob_from_container(container_name: str) -> list:
+    """
+    Return the parsed JSON records from the most recently modified blob
+    inside the given container.
+
+    Works with both:
+      - connection string auth  (AZURE_STORAGE_CONNECTION_STRING is set)
+      - anonymous / public access (connection string is empty)
+
+    ASA writes one JSON record per line (JSONL format), so we split on
+    newlines and parse each line individually.
+    """
+    try:
+        if STORAGE_CONN_STR:
+            # Authenticated access via connection string
+            container_client = ContainerClient.from_connection_string(
+                conn_str=STORAGE_CONN_STR,
+                container_name=container_name,
+            )
+        else:
+            # Anonymous / public access – build the URL from the account name
+            account_url = f"https://{STORAGE_ACCOUNT}.blob.core.windows.net"
+            container_client = ContainerClient(
+                account_url=account_url,
+                container_name=container_name,
+                credential=None,  # no credentials = anonymous
+            )
+
+        blobs = list(container_client.list_blobs())
+        if not blobs:
+            return []
+
+        # Pick the most recently modified blob (latest ASA window output)
+        blobs.sort(
+            key=lambda b: b.last_modified, reverse=True
+        )  # order from most recent changed to oldest - b (a blob in the list)
+        # last_modified is a timestamp that tracks when a blob was last changed
+        latest_blob = blobs[0]
+
+        blob_client = container_client.get_blob_client(latest_blob.name)
+        raw = blob_client.download_blob().readall().decode("utf-8").strip()
+
+        if not raw:
+            return []
+
+        # ASA writes JSONL – one JSON object per line
+        records = []
+        for line in raw.split("\n"):
+            line = line.strip()
+            if line:
+                try:
+                    records.append(json.loads(line))
+                except json.JSONDecodeError:
+                    pass  # skip malformed lines
+
+        return records
+
+    except Exception as exc:
+        app.logger.error(f"Blob read error ({container_name}): {exc}")
+        return []
+
+
+@app.route("/api/device-breakdown", methods=["GET"])
+def device_breakdown():
+    """
+    Return the latest device-breakdown records from bloboutputq1.
+
+    Each record has the shape:
+        { "device_type": "pc", "event_count": 5, "window_end": "2026-03-29T..." }
+    """
+    data = get_latest_blob_from_container(CONTAINER_Q1)
+    return jsonify(data), 200
+
+
+@app.route("/api/spike-alerts", methods=["GET"])
+def spike_alerts():
+    """
+    Return the latest spike-alert records from bloboutputq2.
+
+    Each record has the shape:
+        { "window_end": "2026-03-29T...", "event_count": 7 }
+
+    Only windows where event_count > 10 are written here (enforced by HAVING element in ASA query).
+    """
+    data = get_latest_blob_from_container(CONTAINER_Q2)
+    return jsonify(data), 200
 
 
 # ---------------------------------------------------------------------------
