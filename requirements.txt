@@ -4,3 +4,4 @@ azure-eventhub==5.11.7
 gunicorn==22.0.0
 user-agents==2.2.0
 azure-storage-blob==12.14.1
+six==1.16.0
