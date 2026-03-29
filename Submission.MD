@@ -3,7 +3,7 @@
 - Mireille Dib
 - 040829779
 - March 28th, 2026
-
+- [🎥 Watch the Demo on Youtube!](https://youtu.be/JTruGHkFjv8)
 ---
 
 ## Gap 1. Where To Add Enrichment? To Answer, Find Where We Currently Enrich In The Flow
@@ -268,8 +268,8 @@ flowchart LR
 
     subgraph EH["☁️ Azure Event Hubs"]
         direction TB
-        NS["Namespace: shopstream-mimi"]
-        Hub["Event Hub: clickstream"]
+        NS["Namespace: clickstream"]
+        Hub["Event Hub: shopstream-mimi"]
         P0["Partition 0"]
         P1["Partition 1"]
         NS --> Hub
@@ -323,10 +323,10 @@ flowchart LR
 
 - In the Azure portal, went to Event Hubs → `shopstream-mimi` Namespace → Event Hubs: `clickstream` → Process Data → *Enable real time insights from events* → `Start`.
 - Created a storage account `cst8916week10storageacc` with the most basic configuration (LRS).
-- Created a blob container `cst8916week10cont`.
+- Created a blob containers `bloboutputq1` & `bloboutputq2`.
 - Created Stream Analytics job `cst8916week10saj1`.
   - Set input: Event Hub `clickstream` with default auto‑fill configurations.
-  - Set output: `cst8916week10cont` with default auto‑fill configurations.
+  - Set output: `bloboutputq1` & `bloboutputq2` with default auto‑fill configurations.
 
 ### 2. Write SAQL Queries
 
@@ -528,10 +528,102 @@ Once added, I ran locally and logged the events to test this section worked befo
 
 **4. Update `dashboard.html`**
 
-Some changes we did:
+These were the changes made:
 - Adding two new panels inside `.panels`
-- Added `fetchDeviceBreakdown()` to read from `/api/device-breakdown` endpoint and render a bar chart. We set teh bar width scale relate to the actual max of the data rather than hardcoding to 100 so small counts still look meaningful. 
+- Added `fetchDeviceBreakdown()` to read from `/api/device-breakdown` endpoint and render a bar chart. We set the bar width scale relate to the actual max of the data rather than hardcoding to 100 so small counts still look meaningful. 
 - Added `fetchSpikealerts()` to read from `/api/spike-alerts` endpoint 
 - Added `fetchAndRender()` to call both new functions on every 2-second poll for fast updates.
 
-## Architecture Diagram - Gap 1. and Gap2. Completed
+## Architecture Diagram - Gap 1. and Gap 2. Completed
+
+```mermaid
+flowchart LR
+    subgraph AAS["☁️ Azure App Service"]
+        direction TB
+        Store["🛍️ client.html<br/>Demo Store<br/>(Event Producer)"]
+        Dashboard["📊 dashboard.html<br/>Live Analytics Dashboard"]
+
+        subgraph Flask["⚙️ app.py — Flask Application"]
+            direction TB
+            Enrich["📝 User-Agent Enrichment<br/>@app.before_request<br/>Parses User-Agent →<br/>device_type, browser, os"]
+            Track["/track<br/>Enriched Event Publisher"]
+            LiveAPI["/api/events<br/>Live Event Buffer<br/>(Real-time feed)"]
+            DeviceAPI["/api/device-breakdown<br/>Reads from bloboutputq1"]
+            SpikeAPI["/api/spike-alerts<br/>Reads from bloboutputq2"]
+            Consumer["Background Consumer Thread<br/>EventHubConsumerClient"]
+            BlobReader["get_latest_blob_from_container()<br/>Azure Blob SDK"]
+        end
+
+        Store -->|"POST /track<br/>user events"| Track
+        Dashboard -->|"polls every 2s<br/>GET /api/events"| LiveAPI
+        Dashboard -->|"polls every 2s<br/>GET /api/device-breakdown"| DeviceAPI
+        Dashboard -->|"polls every 2s<br/>GET /api/spike-alerts"| SpikeAPI
+    end
+
+    subgraph EH["☁️ Azure Event Hubs"]
+        direction TB
+        NS["Namespace: clickstream"]
+        Hub["Event Hub: shopstream-mimi"]
+        P0["Partition 0"]
+        P1["Partition 1"]
+        NS --> Hub
+        Hub --> P0
+        Hub --> P1
+    end
+
+    subgraph ASA["☁️ Azure Stream Analytics"]
+        direction TB
+        Job["Stream Analytics Job<br/>cst8916week10saj1"]
+        Q1["Q1: Device Breakdown<br/>GROUP BY device_type<br/>TumblingWindow(second, 10)"]
+        Q2["Q2: Spike Detection<br/>COUNT(*)10<br/>TumblingWindow(second, 10)"]
+        Job --> Q1
+        Job --> Q2
+    end
+
+    subgraph Storage["☁️ Azure Blob Storage<br/>cst8916week10storageacc"]
+        direction TB
+        Container1["📦 bloboutputq1<br/>(Device breakdown results)"]
+        Container2["📦 bloboutputq2<br/>(Spike alert results)"]
+    end
+
+    %% Data Flow
+    Enrich -->|"g.device_type, g.browser, g.os"| Track
+    Track -->|"azure-eventhub SDK<br/>enriched events"| EH
+    EH -->|"continuous read"| Consumer
+    Consumer -->|"append to buffer"| LiveAPI
+
+    EH -->|"input stream"| ASA
+    Q1 -->|"JSONL output"| Container1
+    Q2 -->|"JSONL output"| Container2
+
+    BlobReader -->|"read latest blob"| Container1
+    BlobReader -->|"read latest blob"| Container2
+    Container1 -->|"device data"| DeviceAPI
+    Container2 -->|"spike data"| SpikeAPI
+
+    %% Styling
+    style Store     fill:#2c1a0a,stroke:#e67e22,stroke-width:2px,color:#ffffff
+    style Dashboard fill:#2c1a0a,stroke:#e67e22,stroke-width:2px,color:#ffffff
+    style Flask     fill:#0a1f3a,stroke:#3b82f6,stroke-width:2px,color:#ffffff
+    style Enrich    fill:#1e3a5f,stroke:#4b9eff,stroke-width:1.5px,color:#ffffff
+    style Track     fill:#1a2e4a,stroke:#4b9eff,stroke-width:1.5px,color:#ffffff
+    style LiveAPI   fill:#1a2e4a,stroke:#4b9eff,stroke-width:1.5px,color:#ffffff
+    style DeviceAPI fill:#1a2e4a,stroke:#4b9eff,stroke-width:1.5px,color:#ffffff
+    style SpikeAPI  fill:#1a2e4a,stroke:#4b9eff,stroke-width:1.5px,color:#ffffff
+    style Consumer  fill:#1a2e4a,stroke:#4b9eff,stroke-width:1.5px,color:#ffffff
+    style BlobReader fill:#1a2e4a,stroke:#4b9eff,stroke-width:1.5px,color:#ffffff
+    style AAS       fill:#1e1e1e,stroke:#8e8e8e,stroke-width:2px,color:#ffffff
+    style EH        fill:#2d1a3a,stroke:#b77bff,stroke-width:2px,color:#ffffff
+    style NS        fill:#38204a,stroke:#b77bff,stroke-width:1.5px,color:#ffffff
+    style Hub       fill:#3f2457,stroke:#b77bff,stroke-width:1.5px,color:#ffffff
+    style P0        fill:#442a60,stroke:#b77bff,stroke-width:1.5px,color:#ffffff
+    style P1        fill:#442a60,stroke:#b77bff,stroke-width:1.5px,color:#ffffff
+    style ASA       fill:#0d2818,stroke:#3fb950,stroke-width:2px,color:#ffffff
+    style Job       fill:#1a3a2a,stroke:#3fb950,stroke-width:1.5px,color:#ffffff
+    style Q1        fill:#1a3a2a,stroke:#3fb950,stroke-width:1.5px,color:#ffffff
+    style Q2        fill:#1a3a2a,stroke:#3fb950,stroke-width:1.5px,color:#ffffff
+    style Storage   fill:#3a1a0d,stroke:#f85149,stroke-width:2px,color:#ffffff
+    style Container1 fill:#4a2a1a,stroke:#f85149,stroke-width:1.5px,color:#ffffff
+    style Container2 fill:#4a2a1a,stroke:#f85149,stroke-width:1.5px,color:#ffffff
+
+```
